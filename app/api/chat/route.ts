@@ -14,8 +14,8 @@ export const runtime = 'nodejs';
 // ─────────────────────────────────────────────────────────────
 const MAX_MESSAGE_CHARS = 500; // un visiteur ne peut pas écrire plus de 500 caractères
 const MAX_HISTORY = 6;         // on garde seulement les 6 derniers messages de la conversation
-const MAX_OUTPUT_TOKENS = 350; // longueur maximale de la réponse de l'IA (≈ 250 mots)
-const MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.1-flash-lite'; // nom du modèle (variable d'environnement, sinon valeur par défaut)
+const MODEL = process.env.GROQ_MODEL ?? 'openai/gpt-oss-20b';
+const MAX_OUTPUT_TOKENS = 800; // ces modèles « réfléchissent » avant de répondre : la réflexion consomme aussi des tokens
 const PER_MINUTE = 6;          // 6 questions par minute pour un même visiteur
 const PER_DAY = 40;            // 40 questions par jour pour un même visiteur
 const GLOBAL_PER_DAY = 300;    // 300 questions par jour pour TOUS les visiteurs ensemble
@@ -201,46 +201,40 @@ export async function POST(req: Request) {
     }
     // Quota global atteint, ou clé Gemini absente : message de secours avec tes liens de contact
         if (verdict === 'global') return fallback('limit reached or Redis missing in production');
-        if (!process.env.GEMINI_API_KEY) return fallback('GEMINI_API_KEY is missing');
-
+        if (!process.env.GROQ_API_KEY) return fallback('GROQ_API_KEY is missing');
     // ── Étape E : noter la question dans le journal (la dernière du tableau) ──
     await logQuestion(messages[messages.length - 1].content);
 
     // ── Étape F : appeler Gemini ──
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-goog-api-key': process.env.GEMINI_API_KEY, // ta clé secrète : elle ne quitte jamais le serveur
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`, // ta clé secrète, jamais envoyée au navigateur
       },
       body: JSON.stringify({
-        // Les règles + tes données (le prompt système défini plus haut)
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        // La conversation. Gemini appelle l'assistant « model » au lieu de « assistant »
-        contents: messages.map((m) => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        generationConfig: {
-          maxOutputTokens: MAX_OUTPUT_TOKENS, // réponse courte
-          temperature: 0.3,                   // bas = réponses sobres et peu inventées
-        },
+        model: MODEL,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT }, // tes règles + tes données
+          ...messages, // déjà au bon format : { role: 'user' | 'assistant', content }
+        ],
+        max_tokens: MAX_OUTPUT_TOKENS,
+        temperature: 0.3,
+        reasoning_effort: 'low', // réflexion courte : réponses plus rapides, quota préservé
       }),
-      signal: AbortSignal.timeout(15_000), // si Gemini ne répond pas en 15 secondes, on abandonne
+      signal: AbortSignal.timeout(30_000),
     });
 
-    // Si Gemini répond par une erreur (quota atteint, clé invalide, panne) : message de secours
-        if (!res.ok) {
-      console.error('[chat] Gemini error', res.status, await res.text());
-      return fallback(`Gemini returned ${res.status}`);
+    if (!res.ok) {
+      console.error('[chat] Groq error', res.status, await res.text());
+      return fallback(`Groq returned ${res.status}`);
     }
 
-    // ── Étape G : extraire la réponse ──
     const data = await res.json();
-    // Gemini renvoie la réponse sous la forme candidates[0].content.parts[...].text
-    const reply = (data?.candidates?.[0]?.content?.parts ?? [])
-      .map((p: { text?: string }) => p.text ?? '')
-      .join('')
-      .trim();
+    // Avec ce format, la réponse se trouve dans choices[0].message.content
+    const reply = (data?.choices?.[0]?.message?.content ?? '').trim();
 
-       if (!reply) return fallback('empty reply'); // réponse vide (par exemple bloquée par les filtres de sécurité de Google)
+    if (!reply) return fallback('empty reply'); // réponse vide (par exemple bloquée par les filtres de sécurité de Google)
 
     // ── Étape H : renvoyer la réponse au chat (coupée à 1200 caractères par sécurité) ──
     return NextResponse.json({ reply: reply.slice(0, 1200) });
