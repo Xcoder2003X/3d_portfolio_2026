@@ -94,11 +94,6 @@ const LEFT_LIGHT_INTENSITY = 30; // coloured point lights (physical units, three
 const STAR_COUNTS = { tiny: 420, medium: 170, bright: 36 };
 const ORB_COUNT = 16;
 
-if (typeof window !== 'undefined') {
-  useGLTF.preload(CAR_URL);
-  useGLTF.preload(ROAD_URL);
-}
-
 type Phase = 'idle' | 'driving' | 'parked';
 type Trip = { id: number; to: number }; // to = stop index, or -1 for "back to start"
 type MarkerStatus = 'active' | 'next' | 'done' | 'later';

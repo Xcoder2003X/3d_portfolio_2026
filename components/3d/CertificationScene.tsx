@@ -81,11 +81,6 @@ const dockVectors = certifications.map((c, i) => {
   return new THREE.Vector3(p.x + side * DOCK_OFFSET, p.y - 0.3, p.z + 0.9);
 });
 
-if (typeof window !== 'undefined') {
-  useGLTF.preload(ROCKET_URL);
-  useGLTF.preload(PLANETS_URL);
-}
-
 type Phase = 'idle' | 'flying' | 'docked';
 type Flight = { id: number; to: number }; // to = stop index, or -1 for "go home"
 
