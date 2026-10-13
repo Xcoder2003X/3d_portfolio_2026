@@ -15,7 +15,7 @@ export const runtime = 'nodejs';
 const MAX_MESSAGE_CHARS = 500; // un visiteur ne peut pas écrire plus de 500 caractères
 const MAX_HISTORY = 6;         // on garde seulement les 6 derniers messages de la conversation
 const MAX_OUTPUT_TOKENS = 350; // longueur maximale de la réponse de l'IA (≈ 250 mots)
-const MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash-lite'; // nom du modèle (variable d'environnement, sinon valeur par défaut)
+const MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.1-flash-lite'; // nom du modèle (variable d'environnement, sinon valeur par défaut)
 const PER_MINUTE = 6;          // 6 questions par minute pour un même visiteur
 const PER_DAY = 40;            // 40 questions par jour pour un même visiteur
 const GLOBAL_PER_DAY = 300;    // 300 questions par jour pour TOUS les visiteurs ensemble
@@ -162,9 +162,12 @@ async function logQuestion(q: string) {
 // ─────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   // Petite fonction pour renvoyer le message de secours (code 503 = service indisponible)
- const fallback = (reason: string) => {
+   const fallback = (reason: string) => {
     console.error('[chat] fallback:', reason);
-    return NextResponse.json({ reply: FALLBACK, fallback: true }, { status: 503 });
+    return NextResponse.json(
+      { reply: FALLBACK, fallback: true, ...(process.env.CHAT_DEBUG ? { debug: reason } : {}) },
+      { status: 503 },
+    );
   };
 
   try {
@@ -224,9 +227,9 @@ export async function POST(req: Request) {
     });
 
     // Si Gemini répond par une erreur (quota atteint, clé invalide, panne) : message de secours
-    if (!res.ok) {
+        if (!res.ok) {
       console.error('[chat] Gemini error', res.status, await res.text());
-      return fallback('Gemini returned an error');
+      return fallback(`Gemini returned ${res.status}`);
     }
 
     // ── Étape G : extraire la réponse ──
