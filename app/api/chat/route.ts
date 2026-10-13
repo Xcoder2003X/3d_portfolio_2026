@@ -25,6 +25,8 @@ const GLOBAL_PER_DAY = 300;    // 300 questions par jour pour TOUS les visiteurs
 const FALLBACK =
   "The assistant is unavailable right now, please write to me directly. / L'assistant est indisponible, écris-moi directement.";
 
+   
+
 // ─────────────────────────────────────────────────────────────
 // 3. LE PROMPT SYSTÈME : les instructions données à l'IA
 //    L'IA les lit AVANT chaque question. C'est ici que tu limites ce qu'elle peut faire.
@@ -152,6 +154,7 @@ async function logQuestion(q: string) {
   } catch {
     // Si le journal plante, on ignore : il ne doit jamais empêcher le chat de répondre
   }
+  
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -159,7 +162,10 @@ async function logQuestion(q: string) {
 // ─────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   // Petite fonction pour renvoyer le message de secours (code 503 = service indisponible)
-  const fallback = () => NextResponse.json({ reply: FALLBACK, fallback: true }, { status: 503 });
+ const fallback = (reason: string) => {
+    console.error('[chat] fallback:', reason);
+    return NextResponse.json({ reply: FALLBACK, fallback: true }, { status: 503 });
+  };
 
   try {
     // ── Étape A : lire la demande ──
@@ -191,7 +197,8 @@ export async function POST(req: Request) {
       );
     }
     // Quota global atteint, ou clé Gemini absente : message de secours avec tes liens de contact
-    if (verdict === 'global' || !process.env.GEMINI_API_KEY) return fallback();
+        if (verdict === 'global') return fallback('limit reached or Redis missing in production');
+        if (!process.env.GEMINI_API_KEY) return fallback('GEMINI_API_KEY is missing');
 
     // ── Étape E : noter la question dans le journal (la dernière du tableau) ──
     await logQuestion(messages[messages.length - 1].content);
@@ -217,7 +224,10 @@ export async function POST(req: Request) {
     });
 
     // Si Gemini répond par une erreur (quota atteint, clé invalide, panne) : message de secours
-    if (!res.ok) return fallback();
+    if (!res.ok) {
+      console.error('[chat] Gemini error', res.status, await res.text());
+      return fallback('Gemini returned an error');
+    }
 
     // ── Étape G : extraire la réponse ──
     const data = await res.json();
@@ -227,12 +237,12 @@ export async function POST(req: Request) {
       .join('')
       .trim();
 
-    if (!reply) return fallback(); // réponse vide (par exemple bloquée par les filtres de sécurité de Google)
+       if (!reply) return fallback('empty reply'); // réponse vide (par exemple bloquée par les filtres de sécurité de Google)
 
     // ── Étape H : renvoyer la réponse au chat (coupée à 1200 caractères par sécurité) ──
     return NextResponse.json({ reply: reply.slice(0, 1200) });
-  } catch {
-    // Toute erreur imprévue : on ne montre jamais les détails techniques au visiteur
-    return fallback();
+    } catch (err) {
+    console.error('[chat] exception', err);
+    return fallback('exception');
   }
 }
